@@ -2,7 +2,7 @@
 
 ## Building from git on a recent Debian/Ubuntu
 
-    $ sudo apt-get install autoconf automake
+    $ sudo apt-get install autoconf automake libglib2.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
     $ git clone https://github.com/johang/autocut.git autocut
     $ cd autocut
     $ autoreconf -i
