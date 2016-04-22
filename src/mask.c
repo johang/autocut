@@ -10,6 +10,11 @@
 	"video/x-raw,format=RGB ! " \
 	"appsink name=sink sync=false max-buffers=10"
 
+typedef struct {
+	gint width;
+	gint height;
+} Stream;
+
 static void
 end_of_stream(GstAppSink *appsink, gpointer user_data)
 {
@@ -19,7 +24,27 @@ end_of_stream(GstAppSink *appsink, gpointer user_data)
 static GstFlowReturn
 new_preroll(GstAppSink *sink, gpointer user_data)
 {
-	g_print("%s\n", __func__);
+	Stream *stream = (Stream *) user_data;
+
+	GstSample *sample = gst_app_sink_pull_preroll(sink);
+
+	GstStructure *structure = gst_caps_get_structure(
+		gst_sample_get_caps(sample),
+		0);
+
+	if (!gst_structure_get_int(structure, "width", &stream->width))
+		goto out;
+
+	if (!gst_structure_get_int(structure, "height", &stream->height))
+		goto out;
+
+	g_print("Got preroll: %s %dx%d\n",
+		gst_structure_get_name(structure),
+		stream->width,
+		stream->height);
+
+out:
+	gst_sample_unref(sample);
 
 	return GST_FLOW_OK;
 }
@@ -27,7 +52,27 @@ new_preroll(GstAppSink *sink, gpointer user_data)
 static GstFlowReturn
 new_sample(GstAppSink *sink, gpointer user_data)
 {
-	g_print("%s\n", __func__);
+	GstSample *sample = gst_app_sink_pull_sample(sink);
+
+	if (!sample)
+		return GST_FLOW_OK;
+
+	GstBuffer *buffer = gst_sample_get_buffer(sample);
+
+	if (!buffer)
+		goto out;
+
+	GstMapInfo mapinfo;
+
+	if (!gst_buffer_map(buffer, &mapinfo, GST_MAP_READ))
+		goto out;
+
+	g_print("%ld %p\n", mapinfo.size, mapinfo.data);
+
+	gst_buffer_unmap(buffer, &mapinfo);
+
+out:
+	gst_sample_unref(sample);
 
 	return GST_FLOW_OK;
 }
@@ -39,7 +84,8 @@ static GstAppSinkCallbacks callbacks = {
 };
 
 int
-main(int argc, char **argv) {
+main(int argc, char **argv)
+{
 	GError *error = NULL;
 
 	g_set_application_name("mask");
@@ -56,13 +102,13 @@ main(int argc, char **argv) {
 	gst_app_sink_set_callbacks(
 		GST_APP_SINK(mysink),
 		&callbacks,
-		NULL,
-		NULL);
+		g_malloc0(sizeof (Stream)),
+		g_free);
 
 	g_object_set(
 		G_OBJECT(mysrc),
 		"location",
-		"test.mkv",
+		"test.mp4",
 		NULL);
 
 	gst_object_unref(G_OBJECT(mysink));
