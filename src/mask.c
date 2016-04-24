@@ -15,6 +15,19 @@ typedef struct {
 	gint height;
 } Stream;
 
+static gdouble
+get_timestamp(GstBuffer *buffer)
+{
+	// Timestamp in nanoseconds
+	GstClockTime pts = GST_BUFFER_PTS(buffer);
+
+	guint s = pts / 1000000000ULL;
+	guint ms = pts % 1000000000ULL;
+
+	// Timestamp in seconds, as a double
+	return ((gdouble) s) + (((gdouble) ms) / 1000000000ULL);
+}
+
 static void
 end_of_stream(GstAppSink *appsink, gpointer user_data)
 {
@@ -67,7 +80,8 @@ new_sample(GstAppSink *sink, gpointer user_data)
 	if (!gst_buffer_map(buffer, &mapinfo, GST_MAP_READ))
 		goto out;
 
-	g_print("%ld %p\n", mapinfo.size, mapinfo.data);
+	g_print("%ld %p %.3f\n", mapinfo.size, mapinfo.data,
+		get_timestamp(buffer));
 
 	gst_buffer_unmap(buffer, &mapinfo);
 
