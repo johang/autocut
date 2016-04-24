@@ -8,6 +8,7 @@ AM_INIT_AUTOMAKE
 AC_PROG_CC
 
 # Checks for libraries.
+PKG_CHECK_MODULES(GLIB, glib-2.0 >= 0.0.0)
 PKG_CHECK_MODULES(GST, gstreamer-1.0 >= 0.0.0)
 PKG_CHECK_MODULES(GST_APP, gstreamer-app-1.0 >= 0.0.0)
 
