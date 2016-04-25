@@ -12,3 +12,7 @@
 And optionally, if you want to install it:
 
     $ sudo make install
+
+To be able to use it, you probably need some codecs too:
+
+    $ sudo apt-get install imagemagick gstreamer1.0-plugins-good gstreamer1.0-libav
