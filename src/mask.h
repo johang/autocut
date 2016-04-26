@@ -20,4 +20,6 @@
 #ifndef MASK_H
 #define MASK_H
 
+#define G_LOG_DOMAIN "AUTOCUT"
+
 #endif

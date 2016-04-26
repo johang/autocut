@@ -19,6 +19,7 @@
 
 #include "mask.h"
 
+#include <stdlib.h>
 #include <glib.h>
 
 #include <gst/gst.h>
@@ -48,6 +49,12 @@ typedef struct {
 	GMappedFile *file;
 	gchar *name;
 } Mask;
+
+static gboolean opt_debug = FALSE;
+
+static gdouble opt_threshold = 6;
+
+static gchar *opt_clip = NULL;
 
 static GList *masks = NULL;
 
@@ -106,7 +113,7 @@ compare_frames(gpointer data, gpointer user_data)
 
 	// Print line if the mask is close enough to the frame. 6 is just an
 	// arbitrary number that seems to work well.
-	if (score < 6)
+	if (score < opt_threshold)
 		g_print("%s\t%0.1f\t%0.3f\n", mask->name, score,
 			buf->timestamp);
 }
@@ -134,7 +141,8 @@ new_preroll(GstAppSink *sink, gpointer user_data)
 	if (!gst_structure_get_int(structure, "height", &stream->height))
 		goto out;
 
-	g_printerr("Pre-rolled video (format %s, resolution %dx%d)\n",
+	g_info("Pre-rolled %s (format %s, resolution %dx%d)",
+		opt_clip,
 		gst_structure_get_name(structure),
 		stream->width,
 		stream->height);
@@ -176,13 +184,15 @@ out:
 	return GST_FLOW_OK;
 }
 
-static gboolean
-load_rgb(gchar *path, GError *error)
+static void
+load_rgb(gchar *path)
 {
+	GError *error = NULL;
+
 	GMappedFile *file = g_mapped_file_new(path, FALSE, &error);
 
 	if (!file)
-		return FALSE;
+		g_critical("Failed to load mask: %s", error->message);
 
 	Mask *mask = g_malloc0(sizeof (Mask));
 
@@ -192,17 +202,50 @@ load_rgb(gchar *path, GError *error)
 	// Put this mask at the end of the list of masks
 	masks = g_list_append(masks, mask);
 
-	g_printerr("Loaded RGB mask (name %s, size %lu)\n",
+	g_info("Loaded RGB mask (name %s, size %lu)",
 		path,
 		g_mapped_file_get_length(file));
+}
 
-	return TRUE;
+static void
+my_log_handler(const gchar *log_domain, GLogLevelFlags log_level,
+		const gchar *message, gpointer user_data)
+{
+	switch (log_level & G_LOG_LEVEL_MASK) {
+	case G_LOG_LEVEL_ERROR:
+	case G_LOG_LEVEL_CRITICAL:
+		g_printerr("ERROR: %s\n", message);
+		break;
+	case G_LOG_LEVEL_WARNING:
+		g_printerr("WARNING: %s\n", message);
+		break;
+	case G_LOG_LEVEL_INFO:
+		g_printerr("%s\n", message);
+		break;
+	case G_LOG_LEVEL_DEBUG:
+		if (opt_debug)
+			g_printerr("%s\n", message);
+		break;
+	default:
+		break;
+	}
+
+	if (log_level & G_LOG_FLAG_FATAL)
+		exit(1);
 }
 
 static GstAppSinkCallbacks callbacks = {
 	end_of_stream,
 	new_preroll,
 	new_sample,
+};
+
+static GOptionEntry options[] = {
+	{ "debug", 'd', 0, G_OPTION_ARG_NONE, &opt_debug,
+		"Enable debug messages", NULL },
+	{ "threshold", 't', 0, G_OPTION_ARG_DOUBLE, &opt_threshold,
+		"Max average pixel value difference", "N" },
+	{ NULL },
 };
 
 int
@@ -212,19 +255,43 @@ main(int argc, char **argv)
 
 	g_set_application_name("mask");
 
-	if (!load_rgb("2-player-luigi-loser-mario-winner.rgb", error)) {
-		return 1;
-	}
+	// These will exit the program
+	g_log_set_fatal_mask("AUTOCUT", G_LOG_LEVEL_CRITICAL);
 
-	if (!load_rgb("2-player-luigi-winner-mario-loser.rgb", error)) {
-		return 1;
-	}
+	// Register my own handler
+	g_log_set_handler(
+		"AUTOCUT",
+		G_LOG_LEVEL_MASK | G_LOG_FLAG_FATAL,
+		my_log_handler,
+		NULL);
 
-	if (!load_rgb("start.rgb", error)) {
-		return 1;
-	}
+	GOptionContext *context = g_option_context_new("CLIP MASKS...");
+
+	g_option_context_add_main_entries(context, options, NULL);
+
+	if (!g_option_context_parse(context, &argc, &argv, &error))
+		g_critical("Option parsing failed: %s", error->message);
 
 	gst_init(&argc, &argv);
+
+	gint i = 0;
+
+	for (; i < argc; i++) {
+		if (i == 1)
+			opt_clip = argv[i];
+		else if (i > 1)
+			load_rgb(argv[i]);
+	}
+
+	g_debug("Video clip file: %s", opt_clip);
+	g_debug("Pixel threshold: %.2f", opt_threshold);
+	g_debug("Number of masks: %u", g_list_length(masks));
+
+	if (!opt_clip)
+		g_critical("No video clip");
+
+	if (g_list_length(masks) <= 0)
+		g_critical("No masks loaded");
 
 	Stream *stream = g_malloc0(sizeof (Stream));
 
@@ -232,9 +299,8 @@ main(int argc, char **argv)
 
 	GstElement *pipeline = gst_parse_launch(PIPELINE, &error);
 
-	if (!pipeline) {
-		return 1;
-	}
+	if (!pipeline)
+		g_critical("Failed to parse pipeline");
 
 	GstElement *mysink = gst_bin_get_by_name(GST_BIN(pipeline), "sink");
 	GstElement *mysrc = gst_bin_get_by_name(GST_BIN(pipeline), "src");
@@ -248,7 +314,7 @@ main(int argc, char **argv)
 	g_object_set(
 		G_OBJECT(mysrc),
 		"location",
-		"test.mp4",
+		opt_clip,
 		NULL);
 
 	gst_object_unref(G_OBJECT(mysink));
