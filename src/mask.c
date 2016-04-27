@@ -36,7 +36,6 @@
 typedef struct {
 	gint width;
 	gint height;
-	GMainLoop *loop;
 } Stream;
 
 typedef struct {
@@ -57,6 +56,8 @@ static gdouble opt_threshold = 6;
 static gchar *opt_clip = NULL;
 
 static GList *masks = NULL;
+
+static GMainLoop *loop = NULL;
 
 static gdouble
 get_timestamp(GstBuffer *buffer)
@@ -116,12 +117,6 @@ compare_frames(gpointer data, gpointer user_data)
 	if (score < opt_threshold)
 		g_print("%s\t%0.1f\t%0.3f\n", mask->name, score,
 			buf->timestamp);
-}
-
-static void
-end_of_stream(GstAppSink *appsink, gpointer user_data)
-{
-	g_main_loop_quit(((Stream *) user_data)->loop);
 }
 
 static GstFlowReturn
@@ -234,8 +229,31 @@ my_log_handler(const gchar *log_domain, GLogLevelFlags log_level,
 		exit(1);
 }
 
+static gboolean
+my_bus_callback(GstBus *bus, GstMessage *message, gpointer data)
+{
+	GError *error = NULL;
+
+	switch (GST_MESSAGE_TYPE(message)) {
+	case GST_MESSAGE_ERROR:
+		gst_message_parse_error(message, &error, NULL);
+
+		g_critical("%s: %s",
+		        GST_OBJECT_NAME(message->src),
+			error->message);
+		break;
+	case GST_MESSAGE_EOS:
+		g_main_loop_quit(loop);
+		break;
+	default:
+		break;
+	}
+
+	return TRUE;
+}
+
 static GstAppSinkCallbacks callbacks = {
-	end_of_stream,
+	NULL,
 	new_preroll,
 	new_sample,
 };
@@ -295,12 +313,18 @@ main(int argc, char **argv)
 
 	Stream *stream = g_malloc0(sizeof (Stream));
 
-	stream->loop = g_main_loop_new(NULL, FALSE);
+	loop = g_main_loop_new(NULL, FALSE);
 
 	GstElement *pipeline = gst_parse_launch(PIPELINE, &error);
 
 	if (!pipeline)
 		g_critical("Failed to parse pipeline");
+
+	GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
+
+	guint bus_watch_id = gst_bus_add_watch(bus, my_bus_callback, NULL);
+
+	gst_object_unref(bus);
 
 	GstElement *mysink = gst_bin_get_by_name(GST_BIN(pipeline), "sink");
 	GstElement *mysrc = gst_bin_get_by_name(GST_BIN(pipeline), "src");
@@ -322,11 +346,15 @@ main(int argc, char **argv)
 
 	gst_element_set_state(GST_ELEMENT(pipeline), GST_STATE_PLAYING);
 
-	g_main_loop_run(stream->loop);
+	g_main_loop_run(loop);
+
+	gst_element_set_state(GST_ELEMENT(pipeline), GST_STATE_NULL);
 
 	g_object_unref(pipeline);
 
-	g_main_loop_unref(stream->loop);
+	g_source_remove (bus_watch_id);
+
+	g_main_loop_unref(loop);
 
 	return 0;
 }
