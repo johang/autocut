@@ -20,6 +20,7 @@
 #include "mask.h"
 
 #include <stdlib.h>
+#include <math.h>
 #include <glib.h>
 
 #include <gst/gst.h>
@@ -36,6 +37,8 @@
 typedef struct {
 	gint width;
 	gint height;
+	gint fps_num;
+	gint fps_den;
 } Stream;
 
 typedef struct {
@@ -60,11 +63,8 @@ static GList *masks = NULL;
 static GMainLoop *loop = NULL;
 
 static gdouble
-get_timestamp(GstBuffer *buffer)
+to_double(GstClockTime pts)
 {
-	// Timestamp in nanoseconds
-	GstClockTime pts = GST_BUFFER_PTS(buffer);
-
 	guint s = pts / 1000000000ULL;
 	guint ms = pts % 1000000000ULL;
 
@@ -136,6 +136,10 @@ new_preroll(GstAppSink *sink, gpointer user_data)
 	if (!gst_structure_get_int(structure, "height", &stream->height))
 		goto out;
 
+	if (!gst_structure_get_fraction(structure, "framerate",
+			&stream->fps_num, &stream->fps_den))
+		goto out;
+
 	g_info("Pre-rolled %s (format %s, resolution %dx%d)",
 		opt_clip,
 		gst_structure_get_name(structure),
@@ -167,11 +171,17 @@ new_sample(GstAppSink *sink, gpointer user_data)
 		goto out;
 
 	buf.stream = (Stream *) user_data;
-	buf.timestamp = get_timestamp(buffer);
+	buf.timestamp = to_double(GST_BUFFER_PTS(buffer));
 
 	g_list_foreach(masks, compare_frames, &buf);
 
 	gst_buffer_unmap(buffer, &buf.map);
+
+	glong f = lrint(to_double(GST_BUFFER_DURATION(buffer)) *
+		buf.stream->fps_num / buf.stream->fps_den);
+
+	if (f > 1)
+		g_warning("%ld missing frames at %.3f", f - 1, buf.timestamp);
 
 out:
 	gst_sample_unref(sample);
