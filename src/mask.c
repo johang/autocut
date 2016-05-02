@@ -26,11 +26,19 @@
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
 
-#define PIPELINE \
+#define PIPELINE_RGB \
 	"filesrc name=src ! " \
 	"decodebin ! " \
 	"videoconvert ! " \
 	"video/x-raw,format=RGB ! " \
+	"queue ! " \
+	"appsink name=sink sync=false max-buffers=10"
+
+#define PIPELINE_YUV \
+	"filesrc name=src ! " \
+	"decodebin ! " \
+	"videoconvert ! " \
+	"video/x-raw,format=I420 ! " \
 	"queue ! " \
 	"appsink name=sink sync=false max-buffers=10"
 
@@ -58,6 +66,10 @@ static gdouble opt_threshold = 6;
 
 static gchar *opt_clip = NULL;
 
+static gboolean opt_format_rgb = FALSE;
+
+static gboolean opt_format_yuv = FALSE;
+
 static GList *masks = NULL;
 
 static GMainLoop *loop = NULL;
@@ -72,8 +84,62 @@ to_double(GstClockTime pts)
 	return ((gdouble) s) + (((gdouble) ms) / 1000000000ULL);
 }
 
+static gdouble
+get_yuv_score(gsize size, guint8 *maskdat, guint8 *framedat)
+{
+	guint sad = 0;
+	guint pixels = 0;
+
+	gint i = 0;
+
+	for (i = 0; i < 2 * size / 3; i++) {
+		// Skip black pixels in mask
+		if (!maskdat[i])
+			continue;
+
+		pixels++;
+
+		// Averige absolute difference for Y
+		sad += ABS(maskdat[i] - framedat[i]);
+	}
+
+	if (pixels > 0)
+		return ((gdouble) sad) / pixels;
+	else
+		return G_MAXDOUBLE;
+}
+
+static gdouble
+get_rgb_score(gsize size, guint8 *maskdat, guint8 *framedat)
+{
+	guint sad = 0;
+	guint pixels = 0;
+
+	gint i = 0;
+
+	for (i = 0; i < size; i += 3) {
+		// Skip black pixels in mask
+		if (!maskdat[i + 0] && !maskdat[i + 1] && !maskdat[i + 2])
+			continue;
+
+		pixels++;
+
+		gint dr = maskdat[i + 0] - framedat[i + 0];
+		gint dg = maskdat[i + 1] - framedat[i + 1];
+		gint db = maskdat[i + 2] - framedat[i + 2];
+
+		// Averige absolute difference for R, G, B
+		sad += (ABS(dr) + ABS(dg) + ABS(db)) / 3;
+	}
+
+	if (pixels > 0)
+		return ((gdouble) sad) / pixels;
+	else
+		return G_MAXDOUBLE;
+}
+
 static void
-compare_frames(gpointer data, gpointer user_data)
+compare_mask_to_frame(gpointer data, gpointer user_data)
 {
 	// The mask to compare against
 	Mask *mask = (Mask *) data;
@@ -90,30 +156,14 @@ compare_frames(gpointer data, gpointer user_data)
 	guint8 *maskdat = (guint8 *) g_mapped_file_get_contents(mask->file);
 	guint8 *framedat = buf->map.data;
 
-	guint sad = 0;
-	guint pixels = 0;
+	gdouble score = G_MAXDOUBLE;
 
-	gint i = 0;
+	if (opt_format_rgb)
+		score = get_rgb_score(MIN(masksz, framesz), maskdat, framedat);
+	else if (opt_format_yuv)
+		score = get_yuv_score(MIN(masksz, framesz), maskdat, framedat);
 
-	for (i = 0; i < masksz; i += 3) {
-		// Skip black pixels in mask
-		if (!maskdat[i + 0] && !maskdat[i + 0] && !maskdat[i + 0])
-			continue;
-
-		pixels++;
-
-		gint dr = maskdat[i + 0] - framedat[i + 0];
-		gint dg = maskdat[i + 1] - framedat[i + 1];
-		gint db = maskdat[i + 2] - framedat[i + 2];
-
-		// Averige absolute difference for R, G, B
-		sad += (ABS(dr) + ABS(dg) + ABS(db)) / 3;
-	}
-
-	gdouble score = ((gdouble) sad) / pixels;
-
-	// Print line if the mask is close enough to the frame. 6 is just an
-	// arbitrary number that seems to work well.
+	// Print line if the mask is close enough to the frame
 	if (score < opt_threshold)
 		g_print("%s\t%0.1f\t%0.3f\n", mask->name, score,
 			buf->timestamp);
@@ -130,6 +180,8 @@ new_preroll(GstAppSink *sink, gpointer user_data)
 		gst_sample_get_caps(sample),
 		0);
 
+	const gchar *format = NULL;
+
 	if (!gst_structure_get_int(structure, "width", &stream->width))
 		goto out;
 
@@ -140,9 +192,13 @@ new_preroll(GstAppSink *sink, gpointer user_data)
 			&stream->fps_num, &stream->fps_den))
 		goto out;
 
-	g_info("Pre-rolled %s (format %s, resolution %dx%d)",
+	if (!(format = gst_structure_get_string(structure, "format")))
+		goto out;
+
+	g_info("Pre-rolled %s (format %s %s, resolution %dx%d)",
 		opt_clip,
 		gst_structure_get_name(structure),
+		format,
 		stream->width,
 		stream->height);
 
@@ -173,7 +229,7 @@ new_sample(GstAppSink *sink, gpointer user_data)
 	buf.stream = (Stream *) user_data;
 	buf.timestamp = to_double(GST_BUFFER_PTS(buffer));
 
-	g_list_foreach(masks, compare_frames, &buf);
+	g_list_foreach(masks, compare_mask_to_frame, &buf);
 
 	gst_buffer_unmap(buffer, &buf.map);
 
@@ -190,7 +246,7 @@ out:
 }
 
 static void
-load_rgb(gchar *path)
+load_mask(gchar *path)
 {
 	GError *error = NULL;
 
@@ -207,7 +263,7 @@ load_rgb(gchar *path)
 	// Put this mask at the end of the list of masks
 	masks = g_list_append(masks, mask);
 
-	g_info("Loaded RGB mask (name %s, size %lu)",
+	g_info("Loaded mask (name %s, size %lu)",
 		path,
 		g_mapped_file_get_length(file));
 }
@@ -249,7 +305,7 @@ my_bus_callback(GstBus *bus, GstMessage *message, gpointer data)
 		gst_message_parse_error(message, &error, NULL);
 
 		g_critical("%s: %s",
-		        GST_OBJECT_NAME(message->src),
+			GST_OBJECT_NAME(message->src),
 			error->message);
 		break;
 	case GST_MESSAGE_EOS:
@@ -273,6 +329,10 @@ static GOptionEntry options[] = {
 		"Enable debug messages", NULL },
 	{ "threshold", 't', 0, G_OPTION_ARG_DOUBLE, &opt_threshold,
 		"Max average pixel value difference", "N" },
+	{ "rgb", 0, 0, G_OPTION_ARG_NONE, &opt_format_rgb,
+		"Use RGB masks", NULL },
+	{ "yuv", 0, 0, G_OPTION_ARG_NONE, &opt_format_yuv,
+		"Use YUV masks (better performance)", NULL },
 	{ NULL },
 };
 
@@ -300,6 +360,11 @@ main(int argc, char **argv)
 	if (!g_option_context_parse(context, &argc, &argv, &error))
 		g_critical("Option parsing failed: %s", error->message);
 
+	if (!(opt_format_rgb ^ opt_format_yuv)) {
+		opt_format_rgb = TRUE;
+		opt_format_yuv = FALSE;
+	}
+
 	gst_init(&argc, &argv);
 
 	gint i = 0;
@@ -308,12 +373,14 @@ main(int argc, char **argv)
 		if (i == 1)
 			opt_clip = argv[i];
 		else if (i > 1)
-			load_rgb(argv[i]);
+			load_mask(argv[i]);
 	}
 
 	g_debug("Video clip file: %s", opt_clip);
 	g_debug("Pixel threshold: %.2f", opt_threshold);
 	g_debug("Number of masks: %u", g_list_length(masks));
+	g_debug("RGB masks: %s", opt_format_rgb ? "yes" : "no");
+	g_debug("YUV masks: %s", opt_format_yuv ? "yes" : "no");
 
 	if (!opt_clip)
 		g_critical("No video clip");
@@ -325,7 +392,12 @@ main(int argc, char **argv)
 
 	loop = g_main_loop_new(NULL, FALSE);
 
-	GstElement *pipeline = gst_parse_launch(PIPELINE, &error);
+	GstElement *pipeline = NULL;
+
+	if (opt_format_rgb)
+		pipeline = gst_parse_launch(PIPELINE_RGB, &error);
+	else if (opt_format_yuv)
+		pipeline = gst_parse_launch(PIPELINE_YUV, &error);
 
 	if (!pipeline)
 		g_critical("Failed to parse pipeline");

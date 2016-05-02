@@ -1,5 +1,5 @@
 #!/bin/sh
-# Convert PNGs to 24-bit RGB
+# Convert PNGs to 8-bit YUV 4:2:0
 
 for MASK in "$@"
 do
@@ -9,9 +9,9 @@ do
   else
      convert \
        -depth 8 \
-       -colorspace RGB \
+       -colorspace YUV \
        "$MASK" \
-       $(basename "$MASK").rgb
+       $(basename "$MASK").yuv
      echo Converted "$MASK"
   fi
 done
