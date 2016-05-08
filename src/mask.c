@@ -47,6 +47,7 @@ typedef struct {
 	gint height;
 	gint fps_num;
 	gint fps_den;
+	guint frame_num;
 } Stream;
 
 typedef struct {
@@ -69,6 +70,8 @@ static gchar *opt_clip = NULL;
 static gboolean opt_format_rgb = FALSE;
 
 static gboolean opt_format_yuv = FALSE;
+
+static gboolean opt_dump = FALSE;
 
 static GList *masks = NULL;
 
@@ -139,6 +142,26 @@ get_rgb_score(gsize size, guint8 *maskdat, guint8 *framedat)
 }
 
 static void
+dump_frame_to_file(gchar *mask_name, guint frame_num, guint8 *framedat,
+		gsize framesz)
+{
+	gchar filename[128];
+
+	if (!g_snprintf(filename, sizeof (filename), "dump-%s-%d.bin",
+			mask_name, frame_num) > 0)
+		return;
+
+	GError *error = NULL;
+
+	if (!g_file_set_contents(filename, (gchar *) framedat, framesz,
+			&error))
+		g_warning("Failed to dump buffer to file: %s",
+			error->message);
+
+	g_clear_error(&error);
+}
+
+static void
 compare_mask_to_frame(gpointer data, gpointer user_data)
 {
 	// The mask to compare against
@@ -163,10 +186,16 @@ compare_mask_to_frame(gpointer data, gpointer user_data)
 	else if (opt_format_yuv)
 		score = get_yuv_score(MIN(masksz, framesz), maskdat, framedat);
 
-	// Print line if the mask is close enough to the frame
-	if (score < opt_threshold)
+	if (score < opt_threshold) {
+		// Print line if the mask is close enough to the frame
 		g_print("%s\t%0.1f\t%0.3f\n", mask->name, score,
 			buf->timestamp);
+
+		if (opt_dump)
+			// Write frame to a file with unique name
+			dump_frame_to_file(mask->name, buf->stream->frame_num,
+				framedat, framesz);
+	}
 }
 
 static GstFlowReturn
@@ -241,6 +270,8 @@ new_sample(GstAppSink *sink, gpointer user_data)
 
 out:
 	gst_sample_unref(sample);
+
+	buf.stream->frame_num++;
 
 	return GST_FLOW_OK;
 }
@@ -333,6 +364,8 @@ static GOptionEntry options[] = {
 		"Use RGB masks", NULL },
 	{ "yuv", 0, 0, G_OPTION_ARG_NONE, &opt_format_yuv,
 		"Use YUV masks (better performance)", NULL },
+	{ "dump", 0, 0, G_OPTION_ARG_NONE, &opt_dump,
+		"Dump all matching frames", NULL },
 	{ NULL },
 };
 
@@ -381,6 +414,7 @@ main(int argc, char **argv)
 	g_debug("Number of masks: %u", g_list_length(masks));
 	g_debug("RGB masks: %s", opt_format_rgb ? "yes" : "no");
 	g_debug("YUV masks: %s", opt_format_yuv ? "yes" : "no");
+	g_debug("Dump all matching frames: %s", opt_dump ? "yes" : "no");
 
 	if (!opt_clip)
 		g_critical("No video clip");
