@@ -15,4 +15,4 @@ And optionally, if you want to install it:
 
 To be able to use it, you probably need some codecs too:
 
-    $ sudo apt-get install imagemagick gstreamer1.0-plugins-good gstreamer1.0-libav
+    $ sudo apt-get install imagemagick gstreamer1.0-plugins-good gstreamer1.0-libav libav-tools
