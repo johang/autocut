@@ -147,8 +147,8 @@ dump_frame_to_file(gchar *mask_name, guint frame_num, guint8 *framedat,
 {
 	gchar filename[128];
 
-	if (!g_snprintf(filename, sizeof (filename), "dump-%s-%d.bin",
-			mask_name, frame_num) > 0)
+	if (!(g_snprintf(filename, sizeof (filename), "dump-%s-%d.bin",
+			mask_name, frame_num) > 0))
 		return;
 
 	GError *error = NULL;
