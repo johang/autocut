@@ -29,6 +29,7 @@
 #define PIPELINE_RGB \
 	"filesrc name=src ! " \
 	"decodebin ! " \
+	"videorate name=rate drop-only=true ! " \
 	"videoconvert ! " \
 	"video/x-raw,format=RGB ! " \
 	"queue ! " \
@@ -37,6 +38,7 @@
 #define PIPELINE_YUV \
 	"filesrc name=src ! " \
 	"decodebin ! " \
+	"videorate name=rate drop-only=true ! " \
 	"videoconvert ! " \
 	"video/x-raw,format=I420 ! " \
 	"queue ! " \
@@ -72,6 +74,8 @@ static gboolean opt_format_rgb = FALSE;
 static gboolean opt_format_yuv = FALSE;
 
 static gboolean opt_dump = FALSE;
+
+static gint opt_rate = 0;
 
 static GList *masks = NULL;
 
@@ -366,6 +370,8 @@ static GOptionEntry options[] = {
 		"Use YUV masks (better performance)", NULL },
 	{ "dump", 0, 0, G_OPTION_ARG_NONE, &opt_dump,
 		"Dump all matching frames", NULL },
+	{ "rate", 'r', 0, G_OPTION_ARG_INT, &opt_rate,
+		"Drop frames before masking step to reach this rate", "FPS" },
 	{ NULL },
 };
 
@@ -416,6 +422,11 @@ main(int argc, char **argv)
 	g_debug("YUV masks: %s", opt_format_yuv ? "yes" : "no");
 	g_debug("Dump all matching frames: %s", opt_dump ? "yes" : "no");
 
+	if (opt_rate > 0)
+		g_debug("Max mask rate: %d", opt_rate);
+	else
+		g_debug("Max mask rate: unlimited");
+
 	if (!opt_clip)
 		g_critical("No video clip");
 
@@ -444,6 +455,7 @@ main(int argc, char **argv)
 
 	GstElement *mysink = gst_bin_get_by_name(GST_BIN(pipeline), "sink");
 	GstElement *mysrc = gst_bin_get_by_name(GST_BIN(pipeline), "src");
+	GstElement *rate = gst_bin_get_by_name(GST_BIN(pipeline), "rate");
 
 	gst_app_sink_set_callbacks(
 		GST_APP_SINK(mysink),
@@ -457,8 +469,16 @@ main(int argc, char **argv)
 		opt_clip,
 		NULL);
 
+	if (opt_rate > 0)
+		g_object_set(
+			G_OBJECT(rate),
+			"max-rate",
+			opt_rate,
+			NULL);
+
 	gst_object_unref(G_OBJECT(mysink));
 	gst_object_unref(G_OBJECT(mysrc));
+	gst_object_unref(G_OBJECT(rate));
 
 	gst_element_set_state(GST_ELEMENT(pipeline), GST_STATE_PLAYING);
 
