@@ -110,6 +110,6 @@ if __name__ == "__main__":
 		for (n, (start, stop)) in enumerate(analyze_clip(clip, masks)):
 			transcode_game(
 				clip,
-				os.path.join(path, "cut-%d.mp4" % (n)),
+				os.path.join(path, "cut-%02d.mp4" % (n)),
 				start,
 				stop)
