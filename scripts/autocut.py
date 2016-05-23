@@ -29,6 +29,7 @@ CUTS = os.path.abspath("autocut-cuts")
 
 # Extra parameters to ffmpeg/avconv
 EXTRA = " \
+    -loglevel warning \
     -vf crop=676:480:15:48 \
     -c:a aac -ac 1 -b:a 192k -strict -2 \
     -c:v libx264 -preset fast -tune animation -crf 20 \
