@@ -166,16 +166,6 @@ dump_frame_to_file(gchar *mask_name, guint frame_num, guint8 *framedat,
 }
 
 static void
-check_mask(gpointer data, gpointer user_data)
-{
-	gsize masksz = g_mapped_file_get_length(((Mask *) mask)->file);
-	gsize framesz = (gsize) user_data;
-
-	if (masksz != framesz)
-		g_warning("Mask size didn't match frame size");
-}
-
-static void
 compare_mask_to_frame(gpointer data, gpointer user_data)
 {
 	// The mask to compare against
@@ -244,8 +234,6 @@ new_preroll(GstAppSink *sink, gpointer user_data)
 		format,
 		stream->width,
 		stream->height);
-
-	g_list_foreach(masks, check_mask, NULL);
 
 out:
 	gst_sample_unref(sample);
