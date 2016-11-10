@@ -53,7 +53,7 @@ def analyze_hits(hits):
 	this_non_start = []
 
 	for mask, score, ts in hits:
-		if mask.startswith("start."):
+		if mask.startswith("start"):
 			if len(this_start) and len(this_non_start):
 				# Found a game -- output it
 				yield (max(this_start), min(this_non_start))
